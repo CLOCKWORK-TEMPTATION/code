@@ -15,7 +15,11 @@ spec.loader.exec_module(organizer_module)
 from organizer import AICategorizer, SmartOrganizer, Config, Database
 
 class TestDuplicateFilenames(unittest.TestCase):
+    """
+    حالات اختبار لمعالجة أسماء الملفات المكررة ومنطق التصنيف.
+    """
     def setUp(self):
+        """إعداد بيئة الاختبار باستخدام قاعدة بيانات وهمية وتكوين."""
         self.config = Config()
         self.config.enable_ml_clustering = False
         self.config.batch_size = 10
@@ -45,7 +49,12 @@ class TestDuplicateFilenames(unittest.TestCase):
         ]
 
     def test_categorize_batch_fallback_structure(self):
-        """Test that categorize_batch returns results keyed by path."""
+        """
+        اختبار أن categorize_batch تعيد النتائج مرتبطة بالمسار.
+
+        يتحقق من أنه حتى بدون الذكاء الاصطناعي، يقوم المصنف الاحتياطي بمعالجة الملفات بشكل صحيح
+        ويعيد قاموسًا مرتبطًا بمسار الملف.
+        """
         # Force fallback by ensuring no client
         self.categorizer.client = None
 
@@ -57,7 +66,12 @@ class TestDuplicateFilenames(unittest.TestCase):
         self.assertIn('/path/to/dir2/document.txt', results)
 
     def test_ai_prompt_structure(self):
-        """Test that _build_prompt includes unique IDs."""
+        """
+        اختبار أن _build_prompt يتضمن معرفات فريدة.
+
+        يضمن أنه عند بناء الموجه (Prompt) للذكاء الاصطناعي، يتم تعيين معرف فريد لكل ملف
+        لمنع الغموض في استجابة الذكاء الاصطناعي.
+        """
         prompt = self.categorizer._build_prompt(self.files)
 
         # Extract JSON part from prompt
@@ -76,7 +90,12 @@ class TestDuplicateFilenames(unittest.TestCase):
 
     @patch('organizer.SmartOrganizer._move_file')
     def test_process_batch_integration(self, mock_move):
-        """Test that _process_batch correctly maps results to files using path."""
+        """
+        اختبار أن _process_batch يعين النتائج بشكل صحيح للملفات باستخدام المسار.
+
+        يتحقق من أن المنظم يستخدم مسار الملف لتعيين نتائج التصنيف
+        مرة أخرى إلى الملف الصحيح، مما يمنع المشاكل عندما تكون أسماء الملفات متطابقة.
+        """
         organizer = SmartOrganizer(self.config)
         organizer.categorizer = self.categorizer
 
