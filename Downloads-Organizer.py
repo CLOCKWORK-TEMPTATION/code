@@ -1,3 +1,21 @@
+"""
+منظم التنزيلات الذكي - الإصدار المحسن
+
+يوفر هذا البرنامج نظامًا متقدمًا لتنظيم الملفات يستخدم الذكاء الاصطناعي (Google Gemini)،
+والتعلم الآلي (التجميع)، وتقنيات أخرى متنوعة لفرز وإعادة تسمية وإدارة الملفات تلقائيًا
+في دليل مستهدف (الافتراضي هو التنزيلات).
+
+الميزات:
+    - تصنيف مدعوم بالذكاء الاصطناعي باستخدام Google Gemini.
+    - تحليل المحتوى المحلي واستخراج النص.
+    - تجميع التعلم الآلي لتجميع الملفات المتشابهة.
+    - اكتشاف التكرارات (المطابقة التامة وشبه المطابقة للصور).
+    - دعم النسخ الاحتياطي السحابي (AWS S3).
+    - واجهة برمجة تطبيقات REST للإدارة عن بعد.
+    - واجهات المستخدم الرسومية (GUI) وسطر الأوامر (CLI).
+    - إصدار الملفات وإعادة التسمية الذكية.
+"""
+
 import os
 import sys
 import shutil
@@ -78,6 +96,17 @@ except ImportError:
 # ==========================================
 
 class DuplicateStrategy(Enum):
+    """
+    تعداد لاستراتيجيات التعامل مع الملفات المكررة.
+
+    السمات:
+        SKIP: تخطي الملف المكرر.
+        RENAME: إعادة تسمية الملف الجديد بلاحقة عداد.
+        MOVE: نقل الملف المكرر إلى موقع نسخ احتياطي.
+        DELETE: حذف الملف المكرر.
+        SMART_MERGE: الاحتفاظ بأحدث ملف ونقل الآخرين إلى النسخ الاحتياطي.
+        VERSION: الاحتفاظ بكلا الملفين ولكن تعليم أحدهما كنسخة من الآخر.
+    """
     SKIP = "skip"
     RENAME = "rename"
     MOVE = "move"
@@ -86,6 +115,15 @@ class DuplicateStrategy(Enum):
     VERSION = "version"  # New strategy: keep both versions
 
 class CloudProvider(Enum):
+    """
+    تعداد لمزودي خدمات التخزين السحابي المدعومين.
+
+    السمات:
+        NONE: لا يوجد نسخ احتياطي سحابي.
+        AWS_S3: خدمات أمازون ويب S3.
+        GOOGLE_DRIVE: جوجل درايف (محجوز).
+        ONEDRIVE: مايكروسوفت ون درايف (محجوز).
+    """
     NONE = "none"
     AWS_S3 = "aws_s3"
     GOOGLE_DRIVE = "google_drive"
@@ -93,6 +131,12 @@ class CloudProvider(Enum):
 
 @dataclass
 class Config:
+    """
+    فئة التكوين للتطبيق.
+
+    تخزن جميع الإعدادات المتعلقة بالمسارات، وتكوين الذكاء الاصطناعي، وخيارات المعالجة،
+    وتبديل الميزات.
+    """
     # Paths
     target_folder: str = str(Path.home() / "Downloads")
     organized_root: str = ""
@@ -150,6 +194,10 @@ class Config:
     })
     
     def __post_init__(self):
+        """
+        ما بعد التهيئة لتعيين المسارات المشتقة الافتراضية إذا لم يتم توفيرها.
+        يضمن وجود الدلائل المستهدفة.
+        """
         if not self.organized_root:
             self.organized_root = str(Path(self.target_folder) / "Organized")
         if not self.cache_db:
@@ -163,6 +211,15 @@ class Config:
     
     @classmethod
     def load(cls, path: str = None) -> 'Config':
+        """
+        تحميل التكوين من ملف JSON.
+
+        المعاملات:
+            path (str, optional): مسار ملف التكوين. الافتراضي هو ~/Downloads/.organizer_config.json.
+
+        القيمة المرجعة:
+            Config: كائن Config معبأ بالبيانات.
+        """
         if path is None:
             path = Path.home() / "Downloads" / ".organizer_config.json"
         
@@ -171,11 +228,17 @@ class Config:
                 with open(path, 'r') as f:
                     data = json.load(f)
                 return cls(**{k: v for k, v in data.items() if k in cls.__annotations__})
-            except:
+            except Exception:
                 pass
         return cls()
     
     def save(self, path: str = None):
+        """
+        حفظ التكوين الحالي في ملف JSON.
+
+        المعاملات:
+            path (str, optional): مسار حفظ ملف التكوين. الافتراضي هو .organizer_config.json في المجلد المستهدف.
+        """
         if path is None:
             path = Path(self.target_folder) / ".organizer_config.json"
         
@@ -187,6 +250,17 @@ class Config:
 # ==========================================
 
 def setup_logging(config: Config) -> logging.Logger:
+    """
+    يقوم بإعداد تكوين السجلات (Logging) للتطبيق.
+
+    يتم إخراج السجلات إلى كل من وحدة التحكم (Console) وملف باسم 'organizer.log' في المجلد المستهدف.
+
+    المعاملات:
+        config (Config): كائن التكوين الذي يحتوي على مسار المجلد المستهدف.
+
+    القيمة المرجعة:
+        logging.Logger: نسخة مهيأة من المسجل.
+    """
     logger = logging.getLogger("OrganizerUltimate")
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
@@ -211,11 +285,24 @@ logger = None
 # ==========================================
 
 class Database:
+    """
+    يدير تفاعلات قاعدة بيانات SQLite لتخزين البيانات الوصفية للملفات، وتاريخ العمليات،
+    وفهرسة البحث في النص الكامل.
+    """
     def __init__(self, db_path: str):
+        """
+        تهيئة معالج اتصال قاعدة البيانات.
+
+        المعاملات:
+            db_path (str): مسار الملف لقاعدة بيانات SQLite.
+        """
         self.db_path = db_path
         self.conn = None
     
     def init(self):
+        """
+        تهيئة مخطط قاعدة البيانات، وإنشاء الجداول والفهارس إذا لم تكن موجودة.
+        """
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         
@@ -275,6 +362,16 @@ class Database:
         self.conn.commit()
     
     def get_category(self, file_hash: str, file_name: str) -> Optional[Dict]:
+        """
+        استرجاع معلومات الفئة المخزنة مؤقتًا لملف بناءً على التجزئة (Hash) والاسم.
+
+        المعاملات:
+            file_hash (str): تجزئة SHA-256 للملف.
+            file_name (str): اسم الملف.
+
+        القيمة المرجعة:
+            Optional[Dict]: قاموس يحتوي على 'folder' و 'new_name' إذا وجد، وإلا None.
+        """
         cursor = self.conn.execute(
             "SELECT category, new_name FROM files WHERE hash = ? AND name = ?",
             (file_hash, file_name)
@@ -285,6 +382,13 @@ class Database:
         return None
     
     def cache_category(self, file_info: Dict, category_data: Dict):
+        """
+        تخزين نتيجة التصنيف والبيانات الوصفية للملف مؤقتًا.
+
+        المعاملات:
+            file_info (Dict): معلومات حول الملف (المسار، الاسم، التجزئة، إلخ).
+            category_data (Dict): الفئة المحددة والاسم الجديد المحتمل.
+        """
         self.conn.execute("""
             INSERT OR REPLACE INTO files (path, name, hash, category, new_name, organized_at, metadata, content_text)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -309,6 +413,14 @@ class Database:
         self.conn.commit()
     
     def log_operation(self, op_type: str, file_path: str, dest_path: str):
+        """
+        تسجيل عملية ملف (نقل، إعادة تسمية، إلخ) لمسارات التدقيق ووظيفة التراجع.
+
+        المعاملات:
+            op_type (str): نوع العملية (مثل 'move').
+            file_path (str): المسار الأصلي للملف.
+            dest_path (str): المسار الوجهة للملف.
+        """
         self.conn.execute("""
             INSERT INTO operations (operation_type, file_path, dest_path)
             VALUES (?, ?, ?)
@@ -316,6 +428,15 @@ class Database:
         self.conn.commit()
     
     def get_recent_operations(self, limit: int = 10) -> List[Dict]:
+        """
+        استرجاع أحدث العمليات التي لم يتم التراجع عنها.
+
+        المعاملات:
+            limit (int, optional): الحد الأقصى لعدد العمليات المراد إرجاعها. الافتراضي هو 10.
+
+        القيمة المرجعة:
+            List[Dict]: قائمة بسجلات العمليات.
+        """
         cursor = self.conn.execute("""
             SELECT * FROM operations WHERE undone = 0 
             ORDER BY timestamp DESC LIMIT ?
@@ -323,6 +444,15 @@ class Database:
         return [dict(row) for row in cursor.fetchall()]
     
     def search_content(self, query: str) -> List[Dict]:
+        """
+        إجراء بحث في النص الكامل على محتوى الملف وأسمائه.
+
+        المعاملات:
+            query (str): نص البحث.
+
+        القيمة المرجعة:
+            List[Dict]: قائمة بسجلات الملفات المطابقة.
+        """
         cursor = self.conn.execute("""
             SELECT f.* FROM files f
             JOIN content_index ci ON f.id = ci.file_id
@@ -332,6 +462,14 @@ class Database:
         return [dict(row) for row in cursor.fetchall()]
     
     def add_file_version(self, file_hash: str, version_path: str, version_number: int):
+        """
+        تسجيل نسخة جديدة من الملف.
+
+        المعاملات:
+            file_hash (str): تجزئة محتوى الملف الأصلي.
+            version_path (str): المسار الذي تم تخزين النسخة فيه.
+            version_number (int): رقم تسلسل النسخة.
+        """
         self.conn.execute("""
             INSERT INTO file_versions (file_hash, version_path, version_number)
             VALUES (?, ?, ?)
@@ -339,12 +477,22 @@ class Database:
         self.conn.commit()
     
     def get_file_versions(self, file_hash: str) -> List[Dict]:
+        """
+        استرجاع كل تاريخ الإصدارات لتجزئة محتوى ملف محدد.
+
+        المعاملات:
+            file_hash (str): تجزئة الملف.
+
+        القيمة المرجعة:
+            List[Dict]: قائمة بسجلات الإصدارات مرتبة حسب رقم الإصدار تنازليًا.
+        """
         cursor = self.conn.execute("""
             SELECT * FROM file_versions WHERE file_hash = ? ORDER BY version_number DESC
         """, (file_hash,))
         return [dict(row) for row in cursor.fetchall()]
     
     def close(self):
+        """إغلاق اتصال قاعدة البيانات."""
         if self.conn:
             self.conn.close()
 
@@ -353,10 +501,28 @@ class Database:
 # ==========================================
 
 class FileAnalyzer:
+    """
+    يقوم بتحليل الملفات لاستخراج البيانات الوصفية، وحساب التجزئة (Hashes)، وإنشاء معاينات.
+    """
     def __init__(self, config: Config):
+        """
+        تهيئة المحلل.
+
+        المعاملات:
+            config (Config): كائن التكوين.
+        """
         self.config = config
     
     async def analyze(self, file_path: Path) -> Dict:
+        """
+        تحليل ملف واحد لجمع بيانات وصفية شاملة.
+
+        المعاملات:
+            file_path (Path): مسار الملف.
+
+        القيمة المرجعة:
+            Dict: قاموس يحتوي على معلومات الملف (التجزئة، الحجم، البيانات الوصفية، نص المحتوى، إلخ).
+        """
         info = {
             'name': file_path.name,
             'path': str(file_path),
@@ -392,6 +558,15 @@ class FileAnalyzer:
         return info
     
     async def _calc_hash(self, file_path: Path) -> str:
+        """
+        حساب تجزئة SHA-256 للملف.
+
+        المعاملات:
+            file_path (Path): مسار الملف.
+
+        القيمة المرجعة:
+            str: النص الست عشرية للتجزئة.
+        """
         hasher = hashlib.sha256()
         try:
             with open(file_path, 'rb') as f:
@@ -402,6 +577,15 @@ class FileAnalyzer:
             return "unknown"
     
     async def _extract_image_meta(self, file_path: Path) -> Dict:
+        """
+        استخراج البيانات الوصفية للصورة (الأبعاد، بيانات EXIF).
+
+        المعاملات:
+            file_path (Path): مسار ملف الصورة.
+
+        القيمة المرجعة:
+            Dict: قاموس البيانات الوصفية.
+        """
         meta = {}
         try:
             with Image.open(file_path) as img:
@@ -423,6 +607,15 @@ class FileAnalyzer:
         return meta
     
     async def _generate_thumbnail(self, file_path: Path) -> str:
+        """
+        إنشاء صورة مصغرة لملف صورة.
+
+        المعاملات:
+            file_path (Path): مسار الصورة.
+
+        القيمة المرجعة:
+            str: مسار ملف الصورة المصغرة الذي تم إنشاؤه، أو سلسلة فارغة عند الفشل.
+        """
         if not HAS_IMAGE:
             return ""
             
@@ -446,6 +639,15 @@ class FileAnalyzer:
             return ""
     
     async def _extract_text_content(self, file_path: Path) -> str:
+        """
+        استخراج محتوى النص من أنواع ملفات مختلفة (txt, pdf, docx, image OCR).
+
+        المعاملات:
+            file_path (Path): مسار الملف.
+
+        القيمة المرجعة:
+            str: محتوى النص المستخرج.
+        """
         content = ""
         
         try:
@@ -496,12 +698,31 @@ class FileAnalyzer:
 # ==========================================
 
 class AdvancedDuplicateDetector:
+    """
+    اكتشاف الملفات المكررة باستخدام التجزئة الصارمة والمطابقة التقريبية/الاستدلالية للوسائط.
+    """
     def __init__(self, config: Config, db: Database):
+        """
+        تهيئة الكاشف.
+
+        المعاملات:
+            config (Config): كائن التكوين.
+            db (Database): نسخة قاعدة البيانات.
+        """
         self.config = config
         self.db = db
         self.similarity_threshold = 0.85
     
     async def find_duplicates(self, files: List[Dict]) -> List[List[Dict]]:
+        """
+        تحديد مجموعات الملفات المكررة.
+
+        المعاملات:
+            files (List[Dict]): قائمة بقواميس معلومات الملفات.
+
+        القيمة المرجعة:
+            List[List[Dict]]: قائمة بقوائم، حيث تحتوي كل قائمة داخلية على إدخالات ملفات مكررة.
+        """
         # Group by exact hash first
         hash_groups = defaultdict(list)
         for file_info in files:
@@ -523,6 +744,15 @@ class AdvancedDuplicateDetector:
         return duplicates
     
     async def _find_near_duplicate_images(self, image_files: List[Dict]) -> List[List[Dict]]:
+        """
+        العثور على الصور التي من المحتمل أن تكون مكررة بناءً على الاستدلال (الأبعاد، الحجم).
+
+        المعاملات:
+            image_files (List[Dict]): قائمة بمعلومات ملفات الصور.
+
+        القيمة المرجعة:
+            List[List[Dict]]: مجموعات من الصور المحتمل تكرارها.
+        """
         # This is a simplified implementation
         # In a real scenario, you'd use more sophisticated image similarity algorithms
         # like perceptual hashing or feature matching
@@ -545,6 +775,15 @@ class AdvancedDuplicateDetector:
         return duplicates
     
     async def handle_duplicates(self, duplicate_groups: List[List[Dict]]) -> List[Dict]:
+        """
+        تحديد الإجراءات التي يجب اتخاذها لكل مجموعة مكررة بناءً على الاستراتيجية المكونة.
+
+        المعاملات:
+            duplicate_groups (List[List[Dict]]): مجموعات التكرارات.
+
+        القيمة المرجعة:
+            List[Dict]: قائمة بكائنات الإجراء التي تحدد ما يجب فعله بملفات معينة.
+        """
         actions = []
         
         for group in duplicate_groups:
@@ -588,7 +827,16 @@ class AdvancedDuplicateDetector:
 # ==========================================
 
 class CloudBackupManager:
+    """
+    يدير تحميل الملفات إلى مزودي التخزين السحابي (حاليًا AWS S3).
+    """
     def __init__(self, config: Config):
+        """
+        تهيئة مدير النسخ الاحتياطي السحابي.
+
+        المعاملات:
+            config (Config): كائن التكوين مع إعدادات السحابة.
+        """
         self.config = config
         self.enabled = config.enable_cloud_backup and config.cloud_provider != CloudProvider.NONE.value
         self.client = None
@@ -597,6 +845,7 @@ class CloudBackupManager:
             self._initialize_client()
     
     def _initialize_client(self):
+        """تهيئة عميل مزود السحابة (مثل boto3 لـ S3)."""
         if self.config.cloud_provider == CloudProvider.AWS_S3.value and HAS_S3:
             try:
                 self.client = boto3.client(
@@ -619,6 +868,16 @@ class CloudBackupManager:
                 self.enabled = False
     
     async def backup_file(self, file_path: Path, category: str) -> Optional[str]:
+        """
+        نسخ احتياطي لملف واحد إلى السحابة.
+
+        المعاملات:
+            file_path (Path): مسار الملف.
+            category (str): مجلد الفئة (يستخدم كبادئة/مجلد في السحابة).
+
+        القيمة المرجعة:
+            Optional[str]: معرف الموارد الموحد (URI) لـ S3 أو موقع السحابة إذا نجح، وإلا None.
+        """
         if not self.enabled or not self.client:
             return None
         
@@ -642,7 +901,17 @@ class CloudBackupManager:
 # ==========================================
 
 class AICategorizer:
+    """
+    يستخدم الذكاء الاصطناعي (Google Gemini) أو المنطق الاحتياطي لتصنيف الملفات.
+    """
     def __init__(self, config: Config, db: Database):
+        """
+        تهيئة المصنف.
+
+        المعاملات:
+            config (Config): كائن التكوين (يحتاج إلى api_key).
+            db (Database): نسخة قاعدة البيانات للتخزين المؤقت.
+        """
         self.config = config
         self.db = db
         self.client = None
@@ -651,6 +920,15 @@ class AICategorizer:
             self.client = genai.Client(api_key=config.api_key)
     
     async def categorize_batch(self, files: List[Dict]) -> Dict[str, Dict]:
+        """
+        تصنيف دفعة من الملفات. يتحقق من ذاكرة التخزين المؤقت أولاً، ثم يستدعي الذكاء الاصطناعي إذا لزم الأمر.
+
+        المعاملات:
+            files (List[Dict]): قائمة بقواميس معلومات الملفات.
+
+        القيمة المرجعة:
+            Dict[str, Dict]: تعيين مسار الملف إلى بيانات الفئة ('folder', 'new_name').
+        """
         results = {}
         uncached = []
         
@@ -676,6 +954,15 @@ class AICategorizer:
         return results
     
     async def _ai_categorize(self, files: List[Dict]) -> Dict[str, Dict]:
+        """
+        استدعاء واجهة برمجة تطبيقات Google Gemini لتصنيف الملفات.
+
+        المعاملات:
+            files (List[Dict]): قائمة بمعلومات الملفات.
+
+        القيمة المرجعة:
+            Dict[str, Dict]: نتائج التصنيف.
+        """
         # Start with fallback results to ensure full coverage and handle failures gracefully
         results = self._fallback_categorize(files)
         prompt = self._build_prompt(files)
@@ -704,6 +991,15 @@ class AICategorizer:
             return results
     
     def _build_prompt(self, files: List[Dict]) -> str:
+        """
+        بناء الموجه (Prompt) لنموذج الذكاء الاصطناعي.
+
+        المعاملات:
+            files (List[Dict]): قائمة بمعلومات الملفات.
+
+        القيمة المرجعة:
+            str: سلسلة الموجه التي تم بناؤها.
+        """
         files_json = []
         
         for i, f in enumerate(files):
@@ -730,6 +1026,15 @@ FILES:
 Respond with ONLY the JSON."""
     
     def _fallback_categorize(self, files: List[Dict]) -> Dict[str, Dict]:
+        """
+        منطق التصنيف الاحتياطي بناءً على الامتدادات والكلمات الرئيسية إذا لم يكن الذكاء الاصطناعي متاحًا.
+
+        المعاملات:
+            files (List[Dict]): قائمة بمعلومات الملفات.
+
+        القيمة المرجعة:
+            Dict[str, Dict]: نتائج التصنيف.
+        """
         results = {}
         for f in files:
             category = "Others"
@@ -758,11 +1063,30 @@ Respond with ONLY the JSON."""
 # ==========================================
 
 class MLClustering:
+    """
+    يستخدم التعلم الآلي (scikit-learn) لتجميع الملفات بناءً على ميزات النص.
+    """
     def __init__(self, config: Config):
+        """
+        تهيئة تجميع التعلم الآلي.
+
+        المعاملات:
+            config (Config): كائن التكوين.
+        """
         self.config = config
         self.enabled = HAS_ML and config.enable_ml_clustering
     
     def cluster_files(self, files: List[Dict], n_clusters: int = 5) -> Dict[int, List[Dict]]:
+        """
+        تجميع الملفات في مجموعات باستخدام TF-IDF و DBSCAN.
+
+        المعاملات:
+            files (List[Dict]): قائمة بمعلومات الملفات.
+            n_clusters (int, optional): العدد المستهدف للمجموعات (لا يستخدم بصرامة بواسطة DBSCAN).
+
+        القيمة المرجعة:
+            Dict[int, List[Dict]]: قاموس يعين معرف المجموعة إلى قائمة الملفات.
+        """
         if not self.enabled or not files:
             return {0: files}
         
@@ -804,13 +1128,24 @@ class MLClustering:
 # ==========================================
 
 class RestAPI:
+    """
+    يوفر واجهة برمجة تطبيقات RESTful للتفاعل مع المنظم.
+    """
     def __init__(self, organizer: 'SmartOrganizer', port: int = 8080):
+        """
+        تهيئة واجهة برمجة تطبيقات REST.
+
+        المعاملات:
+            organizer (SmartOrganizer): نسخة المنظم الرئيسية.
+            port (int, optional): المنفذ للاستماع عليه. الافتراضي هو 8080.
+        """
         self.organizer = organizer
         self.port = port
         self.app = None
         self.runner = None
     
     async def start(self):
+        """بدء تشغيل خادم الويب aiohttp."""
         if not HAS_WEB:
             logger.warning("aiohttp not installed, REST API disabled")
             return
@@ -842,12 +1177,14 @@ class RestAPI:
         logger.info(f"🌐 REST API started on http://localhost:{self.port}")
     
     async def handle_status(self, request):
+        """معالج API: الحصول على الحالة."""
         return web.json_response({
             'status': 'running',
             'stats': self.organizer.stats
         })
     
     async def handle_organize(self, request):
+        """معالج API: تشغيل التنظيم."""
         try:
             data = await request.json()
             target = data.get('target_folder', self.organizer.config.target_folder)
@@ -866,9 +1203,11 @@ class RestAPI:
             }, status=500)
     
     async def handle_stats(self, request):
+        """معالج API: الحصول على الإحصائيات."""
         return web.json_response(self.organizer.stats)
     
     async def handle_undo(self, request):
+        """معالج API: التراجع عن آخر عملية."""
         try:
             await self.organizer.undo_last()
             return web.json_response({'success': True})
@@ -879,6 +1218,7 @@ class RestAPI:
             }, status=500)
     
     async def handle_search(self, request):
+        """معالج API: البحث في الملفات."""
         try:
             data = await request.json()
             query = data.get('query', '')
@@ -901,6 +1241,7 @@ class RestAPI:
             }, status=500)
     
     async def handle_preview(self, request):
+        """معالج API: الحصول على صورة معاينة للملف."""
         try:
             file_id = request.match_info['file_id']
             
@@ -928,6 +1269,7 @@ class RestAPI:
             }, status=500)
     
     async def stop(self):
+        """إيقاف خادم REST API."""
         if self.runner:
             await self.runner.cleanup()
 
@@ -936,7 +1278,17 @@ class RestAPI:
 # ==========================================
 
 class SmartOrganizer:
+    """
+    المحرك الأساسي الذي ينسق عملية تنظيم الملفات بأكملها.
+    يربط بين المحلل، والمصنف، وكاشف التكرارات، وقاعدة البيانات.
+    """
     def __init__(self, config: Config):
+        """
+        تهيئة المنظم الذكي.
+
+        المعاملات:
+            config (Config): كائن التكوين.
+        """
         self.config = config
         self.target_dir = Path(config.target_folder)
         self.organized_root = Path(config.organized_root)
@@ -959,6 +1311,9 @@ class SmartOrganizer:
         self.scheduler_thread = None
     
     async def initialize(self):
+        """
+        مهام التهيئة غير المتزامنة (تهيئة قاعدة البيانات، بدء API، بدء المجدول).
+        """
         self.db.init()
         self.categorizer = AICategorizer(self.config, self.db)
         
@@ -974,6 +1329,7 @@ class SmartOrganizer:
         logger.info("✅ Organizer initialized")
     
     def _setup_scheduler(self):
+        """إعداد الجدولة في الخلفية للتشغيل التلقائي."""
         def run_job():
             asyncio.run(self.run())
         
@@ -995,6 +1351,10 @@ class SmartOrganizer:
         logger.info(f"📅 Scheduler set up: {self.config.schedule_interval} at {self.config.schedule_time}")
     
     async def run(self):
+        """
+        ينفذ سير عمل التنظيم الرئيسي:
+        مسح -> اكتشاف التكرارات -> التعامل مع التكرارات -> التنظيم -> التقرير.
+        """
         logger.info("🎯 Starting organization...")
         
         files = await self._scan_directory()
@@ -1029,6 +1389,12 @@ class SmartOrganizer:
         self._print_report()
     
     async def _scan_directory(self) -> List[Dict]:
+        """
+        مسح الدليل المستهدف للملفات وتحليلها.
+
+        القيمة المرجعة:
+            List[Dict]: قائمة بمعلومات الملفات المحللة.
+        """
         files = []
         for entry in self.target_dir.rglob('*'):
             if entry.is_file() and not entry.name.startswith('.'):
@@ -1041,6 +1407,12 @@ class SmartOrganizer:
         return await asyncio.gather(*tasks)
     
     async def _organize_files(self, files: List[Dict]):
+        """
+        تنظيم الملفات عن طريق التجميع ثم معالجة الدفعات.
+
+        المعاملات:
+            files (List[Dict]): قائمة بالملفات لتنظيمها.
+        """
         # ML Clustering if enabled
         if self.config.enable_ml_clustering:
             clusters = self.ml_clustering.cluster_files(files)
@@ -1052,6 +1424,12 @@ class SmartOrganizer:
             await self._process_batch(files)
     
     async def _process_batch(self, files: List[Dict]):
+        """
+        تصنيف ونقل دفعة من الملفات.
+
+        المعاملات:
+            files (List[Dict]): دفعة من الملفات.
+        """
         batch_size = self.config.batch_size
         
         for i in range(0, len(files), batch_size):
@@ -1062,6 +1440,13 @@ class SmartOrganizer:
                 await self._move_file(file_info, categories.get(file_info['path']))
     
     async def _move_file(self, file_info: Dict, category_data: Optional[Dict]):
+        """
+        نقل الملف إلى مجلد الفئة المخصص له.
+
+        المعاملات:
+            file_info (Dict): البيانات الوصفية للملف.
+            category_data (Optional[Dict]): نتيجة التصنيف.
+        """
         if not category_data:
             return
         
@@ -1128,6 +1513,12 @@ class SmartOrganizer:
             self.stats['errors'] += 1
     
     async def _handle_duplicate_action(self, action: Dict):
+        """
+        تنفيذ إجراء محدد لملف مكرر.
+
+        المعاملات:
+            action (Dict): تفاصيل الإجراء (النوع، معلومات الملف).
+        """
         file_info = action['file']
         action_type = action['action']
         
@@ -1149,6 +1540,7 @@ class SmartOrganizer:
                 self.stats['errors'] += 1
     
     def _print_report(self):
+        """طباعة تقرير ملخص لجلسة التنظيم."""
         print("\n" + "=" * 60)
         print("📊 ORGANIZATION REPORT")
         print("=" * 60)
@@ -1162,6 +1554,7 @@ class SmartOrganizer:
         print("=" * 60 + "\n")
     
     async def undo_last(self):
+        """التراجع عن أحدث عملية (إعادة نقل الملف إلى موقعه الأصلي)."""
         ops = self.db.get_recent_operations(limit=1)
         if ops:
             op = ops[0]
@@ -1172,15 +1565,26 @@ class SmartOrganizer:
                 logger.error(f"Undo failed: {e}")
     
     async def search_files(self, query: str) -> List[Dict]:
+        """
+        البحث عن الملفات باستخدام فهرس قاعدة البيانات.
+
+        المعاملات:
+            query (str): نص البحث.
+
+        القيمة المرجعة:
+            List[Dict]: نتائج البحث.
+        """
         return self.db.search_content(query)
     
     async def shutdown_async(self):
+        """تنفيذ مهام الإيقاف غير المتزامنة."""
         if self.rest_api:
             await self.rest_api.stop()
         self.db.close()
         logger.info("👋 Shutdown complete")
     
     def shutdown(self):
+        """غلاف متزامن لعملية الإيقاف."""
         asyncio.run(self.shutdown_async())
 
 # ==========================================
@@ -1188,7 +1592,17 @@ class SmartOrganizer:
 # ==========================================
 
 class OrganizerGUI:
+    """
+    واجهة مستخدم رسومية تعتمد على Tkinter للمنظم.
+    """
     def __init__(self, root: tk.Tk, config: Config):
+        """
+        تهيئة واجهة المستخدم الرسومية.
+
+        المعاملات:
+            root (tk.Tk): نافذة Tkinter الجذرية.
+            config (Config): كائن التكوين.
+        """
         self.root = root
         self.root.title("Smart Organizer Ultimate - Enhanced Edition")
         self.root.geometry("1000x700")
@@ -1203,9 +1617,11 @@ class OrganizerGUI:
         threading.Thread(target=self._init_async, daemon=True).start()
     
     def _init_async(self):
+        """تهيئة محرك المنظم في خيط (Thread) في الخلفية."""
         asyncio.run(self.organizer.initialize())
     
     def _setup_ui(self):
+        """إعداد مكونات واجهة المستخدم الرئيسية (علامات التبويب)."""
         # Create notebook for tabs
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -1232,6 +1648,7 @@ class OrganizerGUI:
         self._setup_settings_tab(settings_frame)
     
     def _setup_main_tab(self, parent):
+        """إعداد علامة تبويب 'التنظيم'."""
         # Header
         header = ttk.Label(parent, text="Smart File Organizer Ultimate - Enhanced", 
                           font=("Arial", 16, "bold"))
@@ -1308,6 +1725,7 @@ class OrganizerGUI:
         ttk.Label(parent, textvariable=self.status_var).pack(side=tk.BOTTOM, pady=10)
     
     def _setup_search_tab(self, parent):
+        """إعداد علامة تبويب 'البحث'."""
         # Search frame
         search_frame = ttk.Frame(parent)
         search_frame.pack(fill=tk.X, padx=20, pady=20)
@@ -1348,6 +1766,7 @@ class OrganizerGUI:
         self.search_tree.bind('<<TreeviewSelect>>', self._on_search_select)
     
     def _setup_settings_tab(self, parent):
+        """إعداد علامة تبويب 'الإعدادات'."""
         # Create notebook for sub-settings
         settings_notebook = ttk.Notebook(parent)
         settings_notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -1375,6 +1794,7 @@ class OrganizerGUI:
         self._setup_schedule_settings(schedule_frame)
     
     def _setup_general_settings(self, parent):
+        """الإعدادات الفرعية: التكوين العام."""
         # Batch size
         batch_frame = ttk.Frame(parent)
         batch_frame.pack(fill=tk.X, padx=20, pady=10)
@@ -1409,6 +1829,7 @@ class OrganizerGUI:
         ttk.Button(parent, text="Save Settings", command=self._save_settings).pack(pady=20)
     
     def _setup_api_settings(self, parent):
+        """الإعدادات الفرعية: مفاتيح API والمنافذ."""
         # API Key
         api_frame = ttk.Frame(parent)
         api_frame.pack(fill=tk.X, padx=20, pady=20)
@@ -1431,6 +1852,7 @@ class OrganizerGUI:
         ttk.Button(parent, text=" Save API Settings", command=self._save_settings).pack(pady=20)
     
     def _setup_cloud_settings(self, parent):
+        """الإعدادات الفرعية: تكوين مزود السحابة."""
         # Cloud provider
         provider_frame = ttk.Frame(parent)
         provider_frame.pack(fill=tk.X, padx=20, pady=20)
@@ -1465,6 +1887,7 @@ class OrganizerGUI:
         ttk.Button(parent, text="Save Cloud Settings", command=self._save_settings).pack(pady=20)
     
     def _setup_schedule_settings(self, parent):
+        """الإعدادات الفرعية: تكوين الجدولة."""
         # Enable scheduling
         enable_frame = ttk.Frame(parent)
         enable_frame.pack(fill=tk.X, padx=20, pady=20)
@@ -1495,11 +1918,13 @@ class OrganizerGUI:
         ttk.Button(parent, text="Save Schedule Settings", command=self._save_settings).pack(pady=20)
     
     def _browse(self):
+        """فتح مربع حوار استعراض الدليل."""
         folder = filedialog.askdirectory()
         if folder:
             self.folder_var.set(folder)
     
     def _start_organize(self):
+        """التحقق من صحة الإعدادات وبدء عملية التنظيم."""
         if self.is_running:
             return
         
@@ -1520,6 +1945,7 @@ class OrganizerGUI:
         threading.Thread(target=self._run_organize, daemon=True).start()
     
     def _run_organize(self):
+        """عامل الخيط لتشغيل التنظيم."""
         try:
             asyncio.run(self.organizer.run())
             self.root.after(0, self._on_complete)
@@ -1528,15 +1954,18 @@ class OrganizerGUI:
             self.root.after(0, self._on_complete)
     
     def _on_complete(self):
+        """رد الاتصال عند اكتمال التنظيم."""
         self.is_running = False
         self.progress.stop()
         self.status_var.set("Ready")
         messagebox.showinfo("Complete", "Organization completed!")
     
     def _undo(self):
+        """تشغيل عملية التراجع."""
         asyncio.run(self.organizer.undo_last())
     
     def _open_organized_folder(self):
+        """فتح المجلد المنظم في مستكشف ملفات النظام."""
         path = self.config.organized_root
         if platform.system() == "Windows":
             os.startfile(path)
@@ -1546,6 +1975,7 @@ class OrganizerGUI:
             subprocess.Popen(["xdg-open", path])
     
     def _search(self):
+        """بدء البحث عن الملفات."""
         query = self.search_var.get().strip()
         if not query:
             return
@@ -1558,6 +1988,7 @@ class OrganizerGUI:
         threading.Thread(target=self._run_search, args=(query,), daemon=True).start()
     
     def _run_search(self, query):
+        """عامل الخيط للبحث."""
         try:
             results = asyncio.run(self.organizer.search_files(query))
             
@@ -1567,6 +1998,7 @@ class OrganizerGUI:
             self.root.after(0, lambda: messagebox.showerror("Search Error", str(e)))
     
     def _update_search_results(self, results):
+        """ملء شجرة نتائج البحث."""
         for result in results:
             self.search_tree.insert('', tk.END, values=(
                 result['name'],
@@ -1576,6 +2008,7 @@ class OrganizerGUI:
             ))
     
     def _on_search_select(self, event):
+        """التعامل مع اختيار عنصر نتيجة البحث."""
         selection = self.search_tree.selection()
         if not selection:
             return
@@ -1590,6 +2023,7 @@ class OrganizerGUI:
         threading.Thread(target=self._load_preview, args=(file_path,), daemon=True).start()
     
     def _load_preview(self, file_path):
+        """تحميل معاينة الملف (صورة أو نص) في الخلفية."""
         try:
             # Check if it's an image
             ext = Path(file_path).suffix.lower()
@@ -1616,11 +2050,13 @@ class OrganizerGUI:
             logger.error(f"Failed to load preview: {e}")
     
     def _show_image_preview(self, photo):
+        """عرض معاينة الصورة على القماش (Canvas)."""
         self.preview_canvas.delete("all")
         self.preview_canvas.create_image(150, 100, image=photo)
         self.current_preview = photo  # Keep reference
     
     def _show_text_preview(self, content):
+        """عرض معاينة النص على القماش (Canvas)."""
         self.preview_canvas.delete("all")
         # Simple text display (would need more sophisticated implementation for better results)
         lines = content.split('\n')[:20]  # First 20 lines
@@ -1628,6 +2064,7 @@ class OrganizerGUI:
             self.preview_canvas.create_text(10, 20 + i*15, text=line, anchor=tk.W)
     
     def _save_settings(self):
+        """حفظ إعدادات واجهة المستخدم الحالية في التكوين."""
         # Update config with values from UI
         self.config.batch_size = self.batch_size_var.get()
         self.config.max_workers = self.max_workers_var.get()
@@ -1655,6 +2092,9 @@ class OrganizerGUI:
 # ==========================================
 
 async def main_cli():
+    """
+    نقطة الدخول الرئيسية لتحليل وسائط سطر الأوامر (CLI) وبدء تشغيل التطبيق.
+    """
     import argparse
     
     parser = argparse.ArgumentParser(description="Smart Organizer Ultimate - Enhanced")
