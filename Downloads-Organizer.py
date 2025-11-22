@@ -657,7 +657,7 @@ class AICategorizer:
         for f in files:
             cached = self.db.get_category(f['hash'], f['name'])
             if cached:
-                results[f['name']] = cached
+                results[f['path']] = cached
             else:
                 uncached.append(f)
         
@@ -670,12 +670,14 @@ class AICategorizer:
             results.update(ai_results)
             
             for f in uncached:
-                if f['name'] in ai_results:
-                    self.db.cache_category(f, ai_results[f['name']])
+                if f['path'] in ai_results:
+                    self.db.cache_category(f, ai_results[f['path']])
         
         return results
     
     async def _ai_categorize(self, files: List[Dict]) -> Dict[str, Dict]:
+        # Start with fallback results to ensure full coverage and handle failures gracefully
+        results = self._fallback_categorize(files)
         prompt = self._build_prompt(files)
         
         try:
@@ -688,16 +690,25 @@ class AICategorizer:
                     temperature=0.1
                 )
             )
-            return json.loads(response.text)
+            response_data = json.loads(response.text)
+
+            # Map AI response back to file paths using the generated IDs
+            for i, f in enumerate(files):
+                fid = str(i)
+                if fid in response_data:
+                    results[f['path']] = response_data[fid]
+
+            return results
         except Exception as e:
             logger.error(f"AI failed: {e}")
-            return self._fallback_categorize(files)
+            return results
     
     def _build_prompt(self, files: List[Dict]) -> str:
         files_json = []
         
-        for f in files:
+        for i, f in enumerate(files):
             file_data = {
+                'id': str(i),
                 'name': f['name'],
                 'ext': f['ext'],
                 'size_kb': f['size_kb'],
@@ -711,7 +722,7 @@ class AICategorizer:
             files_json.append(file_data)
         
         return f"""Categorize these files intelligently based on their names, extensions, metadata, and content.
-Return JSON: {{"filename": {{"folder": "FolderName", "new_name": "OptionalNewName.ext"}}}}
+Return JSON: {{"id": {{"folder": "FolderName", "new_name": "OptionalNewName.ext"}}}}
 
 FILES:
 {json.dumps(files_json, indent=2)}
@@ -739,7 +750,7 @@ Respond with ONLY the JSON."""
                 elif any(term in name_lower for term in ['manual', 'guide', 'tutorial']):
                     category = "Documentation"
             
-            results[f['name']] = {'folder': category, 'new_name': None}
+            results[f['path']] = {'folder': category, 'new_name': None}
         return results
 
 # ==========================================
@@ -1048,7 +1059,7 @@ class SmartOrganizer:
             categories = await self.categorizer.categorize_batch(batch)
             
             for file_info in batch:
-                await self._move_file(file_info, categories.get(file_info['name']))
+                await self._move_file(file_info, categories.get(file_info['path']))
     
     async def _move_file(self, file_info: Dict, category_data: Optional[Dict]):
         if not category_data:
