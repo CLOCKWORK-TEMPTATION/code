@@ -9,6 +9,8 @@ import threading
 import queue
 import sqlite3
 import schedule
+import zipfile
+import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Callable
@@ -29,7 +31,7 @@ from google.genai import types
 @dataclass
 class Config:
     API_KEY: str = "YOUR_GEMINI_API_KEY"
-    TARGET_FOLDER: str = r"C:\Users\moham\Downloads"
+    TARGET_FOLDER: str = str(Path.home() / "Downloads")
     LOG_FILE: str = os.path.join(TARGET_FOLDER, ".organizer_log.json")
     CACHE_DB: str = os.path.join(TARGET_FOLDER, ".organizer_cache.db")
     CONFIG_FILE: str = os.path.join(TARGET_FOLDER, ".organizer_config.json")
@@ -44,12 +46,22 @@ class Config:
     ENABLE_WATCHER: bool = False  # Enable real-time file watching
     SHOW_PREVIEW: bool = True  # Show preview before organizing
     
+    # New Features Configuration
+    SMART_RENAME: bool = False  # Rename files based on content
+    CLEANUP_JUNK: bool = False  # Cleanup temporary/junk files
+    EXTRACT_ARCHIVES: bool = False  # Extract archives to folders
+    HANDLE_DUPLICATES: str = "skip"  # Options: skip, rename, move, delete
+    DUPLICATES_FOLDER: str = "Duplicates"  # Folder for duplicates if move is selected
+
     # File types to read content from for AI categorization
     READABLE_EXTS: set = frozenset({'.txt', '.py', '.js', '.md', '.json', '.csv', '.html', '.log', '.xml', '.yaml', '.yml'})
     
     # File types to extract metadata from
     METADATA_EXTS: set = frozenset({'.jpg', '.jpeg', '.png', '.tiff', '.pdf', '.mp3', '.mp4', '.docx', '.xlsx'})
     
+    # Junk file extensions
+    JUNK_EXTS: set = frozenset({'.tmp', '.bak', '.old', '.log', '.temp', '.swp', '.ds_store', '.thumbs.db'})
+
     # Custom categorization rules
     CUSTOM_RULES: Dict[str, List[str]] = None
     
@@ -585,6 +597,14 @@ class SmartOrganizer:
             
             files_summary.append(file_desc)
         
+        # Adjust prompt based on Smart Rename setting
+        if self.config.SMART_RENAME:
+            output_format = '{"filename.ext": {"folder": "FolderName", "new_name": "NewName.ext"}}'
+            rename_instruction = "6. SUGGEST BETTER FILENAMES: If a filename is generic (e.g., 'IMG_123.jpg', 'Untitled.docx'), suggest a descriptive name based on content/metadata (e.g., 'Paris_Trip_2023.jpg', 'Q1_Report.docx'). Keep the extension same."
+        else:
+            output_format = '{"filename.ext": "FolderName"}'
+            rename_instruction = ""
+
         prompt = f"""
         You are an intelligent file system administrator. 
         Categorize these files based on their Names, Extensions, Content, and Metadata.
@@ -594,7 +614,8 @@ class SmartOrganizer:
         2. Do NOT use generic names like 'Files' or 'Documents' unless necessary.
         3. For images, consider creating date-based folders (e.g., '2023-05-15 Trip to Paris').
         4. For documents with dates, create date-based folders (e.g., '2023-Q1 Reports').
-        5. Return JSON ONLY: {{"filename.ext": "FolderName"}}
+        5. Return JSON ONLY: {output_format}
+        {rename_instruction}
         
         FILES TO SORT:
         {json.dumps(files_summary)}
@@ -658,7 +679,7 @@ class SmartOrganizer:
         
         return mapping
     
-    def _organize_files(self, files: List[Dict]):
+    def _organize_files(self, files: List[Dict], progress_callback: Callable[[float], None] = None):
         """Organize a list of files"""
         if not files:
             return
@@ -669,6 +690,9 @@ class SmartOrganizer:
                 logger.info("Organization cancelled by user")
                 return
         
+        total_files = len(files)
+        processed_files = 0
+
         # Process files in batches
         for i in range(0, len(files), self.config.BATCH_SIZE):
             batch = files[i:i+self.config.BATCH_SIZE]
@@ -693,16 +717,39 @@ class SmartOrganizer:
                 # Cache the new categories
                 for file_info in uncached_files:
                     if file_info['name'] in new_categories:
-                        self.cache.cache_file_category(file_info, new_categories[file_info['name']])
+                        # Store complex object or simple string
+                        val = new_categories[file_info['name']]
+                        if isinstance(val, dict):
+                             # Serialize dict for cache or modify cache to support JSON
+                             # For simplicity, we cache the folder name only,
+                             # but for smart rename we need more.
+                             # Let's store JSON string in category column if it starts with {
+                             self.cache.cache_file_category(file_info, json.dumps(val))
+                        else:
+                            self.cache.cache_file_category(file_info, val)
             
             # Move files in parallel
             with ThreadPoolExecutor(max_workers=self.config.MAX_WORKERS) as executor:
                 futures = []
                 
                 for file_info in batch:
-                    folder = categories.get(file_info['name'])
-                    if folder:
-                        futures.append(executor.submit(self._move_file, file_info, folder))
+                    result = categories.get(file_info['name'])
+                    if result:
+                        # Parse if it's a JSON string from cache
+                        if isinstance(result, str) and result.startswith('{') and 'folder' in result:
+                            try:
+                                result = json.loads(result)
+                            except:
+                                pass
+
+                        folder = result
+                        new_name = None
+
+                        if isinstance(result, dict):
+                            folder = result.get('folder', 'Miscellaneous')
+                            new_name = result.get('new_name')
+
+                        futures.append(executor.submit(self._move_file, file_info, folder, new_name))
                 
                 # Wait for all moves to complete
                 for future in as_completed(futures):
@@ -710,10 +757,22 @@ class SmartOrganizer:
                         future.result()
                     except Exception as e:
                         logger.error(f"Error moving file: {e}")
+                    finally:
+                        processed_files += 1
+                        if progress_callback:
+                            progress_callback(processed_files / total_files * 100)
         
         self.save_log()
         self._cleanup_empty_dirs()
         
+        # Cleanup junk files if enabled
+        if self.config.CLEANUP_JUNK:
+            self._cleanup_junk()
+
+        # Extract archives if enabled
+        if self.config.EXTRACT_ARCHIVES:
+            self._extract_archives()
+
         # Compress old files if enabled
         if self.config.COMPRESS_OLD_FILES:
             self._compress_old_files()
@@ -753,15 +812,21 @@ class SmartOrganizer:
         # In a real implementation, you'd ask for confirmation here
         return True
     
-    def _move_file(self, file_info: Dict, category: str):
-        """Move a file to its category folder"""
+    def _move_file(self, file_info: Dict, category: str, new_name: str = None):
+        """Move a file to its category folder with optional renaming"""
         source_path = Path(file_info['path'])
         dest_folder = self.target_dir / category
         
+        # Determine destination filename
+        dest_filename = new_name if new_name and self.config.SMART_RENAME else file_info['name']
+        # Ensure extension remains correct if AI messed up
+        if new_name and Path(new_name).suffix.lower() != source_path.suffix.lower():
+             dest_filename = Path(new_name).stem + source_path.suffix.lower()
+
         if not self.config.DRY_RUN:
             dest_folder.mkdir(parents=True, exist_ok=True)
         
-        dest_path = dest_folder / file_info['name']
+        dest_path = dest_folder / dest_filename
         
         # Handle name conflicts
         if dest_path.exists():
@@ -770,16 +835,45 @@ class SmartOrganizer:
             dest_hash = self._get_file_hash(dest_path)
             
             if src_hash == dest_hash:
-                logger.warning(f"Duplicate found: {file_info['name']} (Skipping)")
-                return
+                logger.warning(f"Duplicate found: {file_info['name']}")
+
+                if self.config.HANDLE_DUPLICATES == "delete":
+                    if not self.config.DRY_RUN:
+                        try:
+                            os.remove(source_path)
+                            logger.info(f"Deleted duplicate: {file_info['name']}")
+                        except Exception as e:
+                            logger.error(f"Failed to delete duplicate {file_info['name']}: {e}")
+                    else:
+                        logger.info(f"[DRY RUN] Would delete duplicate: {file_info['name']}")
+                    return
+
+                elif self.config.HANDLE_DUPLICATES == "move":
+                    dup_folder = self.target_dir / self.config.DUPLICATES_FOLDER
+                    if not self.config.DRY_RUN:
+                        dup_folder.mkdir(exist_ok=True)
+
+                    dest_path = dup_folder / dest_filename
+                    # If duplicate exists in duplicates folder, rename it
+                    stem = dest_path.stem
+                    suffix = dest_path.suffix
+                    counter = 1
+                    while dest_path.exists():
+                        dest_path = dup_folder / f"{stem}_{counter}{suffix}"
+                        counter += 1
+
+                elif self.config.HANDLE_DUPLICATES == "skip":
+                     logger.info(f"Skipping duplicate: {file_info['name']}")
+                     return
             
-            # Rename if different content
-            stem = dest_path.stem
-            suffix = dest_path.suffix
-            counter = 1
-            while dest_path.exists():
-                dest_path = dest_folder / f"{stem}_{counter}{suffix}"
-                counter += 1
+            # Rename if different content or if we are keeping both
+            if self.config.HANDLE_DUPLICATES == "rename" or (src_hash != dest_hash and dest_path.parent == dest_folder):
+                stem = dest_path.stem
+                suffix = dest_path.suffix
+                counter = 1
+                while dest_path.exists():
+                    dest_path = dest_folder / f"{stem}_{counter}{suffix}"
+                    counter += 1
         
         # Move the file
         if not self.config.DRY_RUN:
@@ -792,11 +886,14 @@ class SmartOrganizer:
                     'category': category,
                     'timestamp': datetime.now().isoformat()
                 })
-                logger.info(f"[MOVED] {file_info['name']} -> {category}/")
+                log_msg = f"[MOVED] {file_info['name']} -> {category}/{dest_path.name}"
+                if new_name and self.config.SMART_RENAME:
+                    log_msg += f" (Renamed from {file_info['name']})"
+                logger.info(log_msg)
             except Exception as e:
                 logger.error(f"Failed to move {file_info['name']}: {e}")
         else:
-            logger.info(f"[DRY RUN] Would move {file_info['name']} -> {category}/")
+            logger.info(f"[DRY RUN] Would move {file_info['name']} -> {category}/{dest_path.name}")
     
     def _get_file_hash(self, file_path: Path) -> str:
         """Calculate file hash for duplicate detection"""
@@ -824,6 +921,57 @@ class SmartOrganizer:
                 except:
                     pass
     
+    def _cleanup_junk(self):
+        """Delete temporary and junk files"""
+        if self.config.DRY_RUN:
+            return
+
+        count = 0
+        for entry in self.target_dir.rglob('*'):
+            if entry.is_file() and entry.suffix.lower() in self.config.JUNK_EXTS:
+                try:
+                    os.remove(entry)
+                    count += 1
+                except Exception as e:
+                    logger.debug(f"Failed to delete junk file {entry.name}: {e}")
+
+        if count > 0:
+            logger.info(f"Cleaned up {count} junk files.")
+
+    def _extract_archives(self):
+        """Extract zip/tar archives to their own folders"""
+        if self.config.DRY_RUN:
+             return
+
+        for entry in self.target_dir.iterdir():
+            if entry.is_file() and entry.suffix.lower() in {'.zip', '.tar', '.gz', '.7z', '.rar'}:
+                try:
+                     # Create folder with same name
+                     extract_path = entry.with_suffix('')
+
+                     # Skip if folder already exists (might have been extracted)
+                     if extract_path.exists():
+                         continue
+
+                     logger.info(f"Extracting {entry.name}...")
+
+                     if entry.suffix.lower() == '.zip':
+                         with zipfile.ZipFile(entry, 'r') as zip_ref:
+                             extract_path.mkdir(exist_ok=True)
+                             zip_ref.extractall(extract_path)
+                     elif entry.suffix.lower() in {'.tar', '.gz'}:
+                         with tarfile.open(entry, 'r') as tar_ref:
+                             extract_path.mkdir(exist_ok=True)
+                             tar_ref.extractall(extract_path)
+                     # rar and 7z require external libs usually not in standard lib, skipping for now or using shutils unpack_archive if supported
+
+                     logger.info(f"Extracted to {extract_path.name}/")
+
+                     # Optionally move archive to a "Backup" folder or delete it
+                     # For now, we leave it.
+                except Exception as e:
+                    logger.error(f"Failed to extract {entry.name}: {e}")
+
     def _compress_old_files(self):
         """Compress files older than specified days"""
         cutoff_date = datetime.now() - timedelta(days=self.config.COMPRESS_DAYS)
@@ -1048,6 +1196,28 @@ class OrganizerGUI:
         self.compress_var = tk.BooleanVar(value=self.config.COMPRESS_OLD_FILES)
         ttk.Checkbutton(options_frame, text="Compress Files Older Than 30 Days", 
                        variable=self.compress_var).pack(anchor=tk.W)
+
+        # New Features Checkboxes
+        self.rename_var = tk.BooleanVar(value=self.config.SMART_RENAME)
+        ttk.Checkbutton(options_frame, text="Smart Rename (AI suggests filenames)",
+                        variable=self.rename_var).pack(anchor=tk.W)
+
+        self.cleanup_var = tk.BooleanVar(value=self.config.CLEANUP_JUNK)
+        ttk.Checkbutton(options_frame, text="Cleanup Junk Files",
+                        variable=self.cleanup_var).pack(anchor=tk.W)
+
+        self.extract_var = tk.BooleanVar(value=self.config.EXTRACT_ARCHIVES)
+        ttk.Checkbutton(options_frame, text="Auto Extract Archives",
+                        variable=self.extract_var).pack(anchor=tk.W)
+
+        # Duplicate Handling
+        dup_frame = ttk.Frame(options_frame)
+        dup_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(dup_frame, text="Duplicate Handling:").pack(side=tk.LEFT)
+        self.dup_var = tk.StringVar(value=self.config.HANDLE_DUPLICATES)
+        dup_combo = ttk.Combobox(dup_frame, textvariable=self.dup_var,
+                                 values=["skip", "rename", "move", "delete"], state="readonly")
+        dup_combo.pack(side=tk.LEFT, padx=5)
         
         # Buttons frame
         buttons_frame = ttk.Frame(main_frame)
@@ -1058,6 +1228,11 @@ class OrganizerGUI:
         ttk.Button(buttons_frame, text="Search Files", command=self._search).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Save Config", command=self._save_config).pack(side=tk.LEFT, padx=5)
         
+        # Progress Bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill=tk.X, pady=5)
+
         # Log frame
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding="10")
         log_frame.pack(fill=tk.BOTH, expand=True)
@@ -1114,8 +1289,21 @@ class OrganizerGUI:
         # Update config
         self._update_config()
         
+        def update_progress(value):
+            self.progress_var.set(value)
+            self.root.update_idletasks()
+
+        def run_with_progress():
+            files = self.organizer.scan_directory()
+            if not files:
+                logger.info("No files found to organize.")
+                return
+
+            logger.info(f"Found {len(files)} files. Starting AI organization...")
+            self.organizer._organize_files(files, progress_callback=update_progress)
+
         # Run in a separate thread to avoid freezing the GUI
-        threading.Thread(target=self.organizer.run, daemon=True).start()
+        threading.Thread(target=run_with_progress, daemon=True).start()
     
     def _undo(self):
         """Undo the last organization operation"""
@@ -1205,6 +1393,10 @@ class OrganizerGUI:
         self.config.ENABLE_WATCHER = self.watcher_var.get()
         self.config.SHOW_PREVIEW = self.preview_var.get()
         self.config.COMPRESS_OLD_FILES = self.compress_var.get()
+        self.config.SMART_RENAME = self.rename_var.get()
+        self.config.CLEANUP_JUNK = self.cleanup_var.get()
+        self.config.EXTRACT_ARCHIVES = self.extract_var.get()
+        self.config.HANDLE_DUPLICATES = self.dup_var.get()
         
         # Update organizer config
         self.organizer.config = self.config
