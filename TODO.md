@@ -1,187 +1,126 @@
 # TODO - المهام المخططة
 
-## مشروع جديد: نظام إدارة وجبات الطاقم (CrewCatering)
+## صفحة جديدة: تطبيق CrewCatering (مُضاف للمشروع الأصلي)
 
-### Master Prompt: Full Stack Crew Catering System (Arabic-First)
-
-#### الدور والهدف
-أنت مهندس معماري رئيسي للبرمجيات (Full-Stack). مهمتك هي بناء نظام جاهز للإنتاج يسمى **"CrewCatering"**.
-**القيد الأساسي:** هذا تطبيق **عربي أولاً (Arabic-First)**. تخطيط واجهة المستخدم الافتراضي هو **RTL (من اليمين إلى اليسار)**.
-
-#### الحزمة التقنية والمعايير
-
-1. **الواجهة الأمامية (Frontend):** Angular 18+ (Standalone Components)، NgRx Signals (إدارة الحالة)، Angular Material
-2. **الواجهة الخلفية (Backend):** Python FastAPI (غير متزامن)، SQLAlchemy (غير متزامن)، PostgreSQL + PostGIS
-3. **المعمارية:** التصميم الموجه بالنطاق (DDD) على كلا الطرفين
-4. **اللغة:** العربية (افتراضية) + الإنجليزية (ثانوية)
+> **ملاحظة:** هذا تطبيق جديد يُضاف إلى مشروع منظم التنزيلات الأصلي
 
 ---
 
-### الجزء 1: الواجهة الخلفية (Backend - FastAPI)
+## وثيقة معمارية (Architectural Blueprint) متكاملة
 
-إنشاء هيكل API قابل للتوسع يلبي المتطلبات التالية:
+الله ينور عليك.. دي مش مجرد خطة، دي **"وثيقة معمارية" (Architectural Blueprint)** متكاملة. أنت كده جمعت كل الخيوط:
 
-#### قاعدة البيانات
-- استخدام محرك `AsyncPG`
-- يجب أن تدعم النماذج UTF-8 بالكامل
-- استخدام `geoalchemy2` لتكامل PostGIS
-- تنفيذ استعلام للعثور على المطاعم ضمن نطاق 3 كم
+1. **المتانة (Backend):** FastAPI + Async + PostGIS (عشان الموقع).
+2. **الحداثة (Frontend):** Angular 18 + Signals + Standalone.
+3. **الواقعية (Business Logic):** قواعد الـ VIP والاستثناءات.
+4. **الهوية (Localization):** ودي الإضافة الأهم، إن النظام **"عربي أولاً" (Arabic-First)**.
 
-#### المصادقة (Auth)
-- مبنية على JWT
-- نقطة نهاية `POST /auth/qr-login` تأخذ حمولة موقعة
-
-#### محرك التمويل (Finance Engine - العقل المدبر)
-منطق الأعمال:
-- **VIP**: مغطى بنسبة 100%
-- **Standard**: المستخدم يدفع، إلا إذا كان هناك **استثناء نشط** (مرة كل 3 أسابيع)
-
-#### دعم التدويل (i18n)
-- ضمان إرجاع رسائل خطأ API بناءً على رأس `Accept-Language`
+النقطة الأخيرة دي بالذات (Arabic/RTL) محتاجة وقفة تقنية صغيرة عشان ما تعانيش قدام، لأن تحويل تطبيق من LTR لـ RTL بعد ما يخلص هو كابوس. عشان كده لازم نبني صح من **"الدقيقة صفر"**.
 
 ---
 
-### الجزء 2: الواجهة الأمامية (Frontend - Angular 18+)
+## Master Prompt: Full Stack Crew Catering System (Arabic-First)
 
-#### معمارية RTL (حرجة - Critical)
-**ملاحظة مهمة:** هذه النقطة أساسية لتجنب كابوس التحويل لاحقاً
+### # Role & Objective
+You are a Principal Full-Stack Software Architect. Your mission is to scaffold a production-ready system called **"CrewCatering"**.
 
-- استخدام **الخصائص المنطقية (Logical Properties)** في SCSS
-  - مثال: `margin-inline-start` بدلاً من `margin-left`
-  - مثال: `padding-inline-end` بدلاً من `padding-right`
-  - هذا يضمن التبديل التلقائي للإنجليزية
-- تعيين `dir="rtl"` في `index.html` افتراضياً
-
-#### التدويل (Internationalization)
-- استخدام **Transloco** أو **ngx-translate** للتبديل اللغوي في وقت التشغيل
-  - مطلوب لميزة "التبديل الفوري" بدون إعادة تحميل التطبيق
-- إنشاء ملفين JSON:
-  - `ar.json` (أساسي)
-  - `en.json` (ثانوي)
-
-#### إدارة الحالة (State Management)
-- تخزين `UserPreference { language: 'ar' | 'en' }` في LocalStorage
-- المزامنة مع Signal
-
-#### المكونات الرئيسية
-
-##### 1. LanguageSwitcherComponent
-- يبدل سمة `dir` على عنصر `html`
-- يبدل ملفات الترجمة
-
-##### 2. TrackingComponent
-- يدمج الخريطة (Leaflet أو Google Maps)
-- **حرج:** ضمان وضع عناصر التحكم في الخريطة بشكل صحيح في وضع RTL
+**Core Constraint:** This is an **Arabic-First application**. The default UI layout is **RTL (Right-To-Left)**.
 
 ---
 
-### خطة التنفيذ
+### # Tech Stack & Standards
 
-توفير المخرجات في 3 كتل متميزة:
-
-#### الكتلة 1: قاعدة البيانات وجوهر الواجهة الخلفية
-- `models.py` (SQLAlchemy مع أنواع جغرافية)
-- `finance_service.py` (منطق تقسيم التكلفة)
-
-#### الكتلة 2: معمارية الواجهة الأمامية وإعداد RTL
-- `styles.scss` (تعريف mixins عالمية لـ RTL/LTR والخصائص المنطقية)
-- `transloco.config.ts` (إعداد العربية كافتراضي)
-- `app.component.ts` (منطق التعامل مع التبديل الديناميكي لـ `dir`)
-
-#### الكتلة 3: تطبيق الميزات الرئيسية
-- `GeoService` (الواجهة الخلفية) + `TrackingComponent` (الواجهة الأمامية)
+1. **Frontend:** Angular 18+ (Standalone Components), NgRx Signals (State), Angular Material.
+2. **Backend:** Python FastAPI (Async), SQLAlchemy (Async), PostgreSQL + PostGIS.
+3. **Architecture:** Domain-Driven Design (DDD) on both ends.
+4. **Language:** Arabic (Default) + English (Secondary).
 
 ---
 
-### نصائح تقنية مهمة
+### # Part 1: The Backend (FastAPI)
 
-#### 1. CSS Logical Properties (أهم نقطة في RTL)
-- ❌ **خطأ:** استخدام `margin-left`
-- ✅ **صحيح:** استخدام `margin-inline-start`
-- هذه الطريقة الحديثة تجعل CSS يقلب تلقائياً عند تغيير اللغة
+Create a scalable API structure catering to the following:
 
-#### 2. الخطوط (Fonts)
-في ملف SCSS:
-- **للعربية:** استخدام خطوط "Tajawal" أو "Cairo" من Google Fonts
-- **للإنجليزية:** استخدام "Roboto"
-- هذا يحدث فرقاً كبيراً في المظهر الاحترافي ("رصين وجاد")
-
-#### 3. خرائط RTL
-- أزرار التحكم في الخريطة (الزووم وغيره) قد تتعارض مع RTL
-- التأكد من أن CSS الخاص بالخريطة معزول (Isolated)
-- أو تطبيق `dir="ltr"` إذا كانت الخريطة بالإنجليزية
-- أو ضبطها بشكل صحيح للعربية
+* **Database:** Use `AsyncPG` driver. Models must support UTF-8 fully.
+* **Geo-Location:** Use `geoalchemy2` for PostGIS integration. Implement a query to find restaurants within a 3km buffer.
+* **Auth:** JWT based. Endpoint `POST /auth/qr-login` taking a signed payload.
+* **Finance Engine (The Brain):**
+    * Logic: `VIP` = 100% covered. `Standard` = User pays, unless `Exception` is active (once every 3 weeks).
+* **i18n Support:** Ensure API error messages are returned based on the `Accept-Language` header.
 
 ---
 
-### الأولويات والمراحل
+### # Part 2: The Frontend (Angular 18+)
 
-#### المرحلة 1: البنية التحتية (Infrastructure)
+* **RTL Architecture (Critical):**
+    * Use **Logical Properties** in SCSS (e.g., `margin-inline-start` instead of `margin-left`, `padding-inline-end` instead of `padding-right`). This ensures automatic flipping for English.
+    * Set `dir="rtl"` in `index.html` by default.
+
+* **Internationalization:**
+    * Use **Transloco** or **ngx-translate** for *runtime* language switching (required for the "Real-time toggle" feature without app reload).
+    * Create two JSON files: `ar.json` (Primary) and `en.json`.
+
+* **State Management:**
+    * Store `UserPreference { language: 'ar' | 'en' }` in LocalStorage and sync with a Signal.
+
+* **Components:**
+    * `LanguageSwitcherComponent`: Toggles `dir` attribute on the `html` tag and switches translation files.
+    * `TrackingComponent`: Integrates Map (Leaflet or Google Maps). **Crucial:** Ensure map controls are positioned correctly in RTL mode.
+
+---
+
+### # Execution Plan
+
+Provide the output in 3 distinct blocks:
+
+**Block 1: Database & Backend Core**
+* `models.py` (SQLAlchemy with Geo types).
+* `finance_service.py` (The cost splitting logic).
+
+**Block 2: Frontend Architecture & RTL Setup**
+* `styles.scss` (Defining the global RTL/LTR mixins and logical properties).
+* `transloco.config.ts` (Setup for Arabic default).
+* `app.component.ts` (Logic to handle dynamic `dir` switching).
+
+**Block 3: Key Features Implementation**
+* `GeoService` (Backend) + `TrackingComponent` (Frontend) connection.
+
+---
+
+## نصائح "مهندس لمهندس" قبل التنفيذ
+
+### 1. CSS Logical Properties
+دي **أهم نقطة** في الـ RTL. لو الوكيل كتب `margin-left`، قله **"غلط"**. لازم يستخدم `margin-inline-start`. دي الطريقة الحديثة اللي بتخلي الـ CSS يقلب لوحده لما اللغة تتغير من عربي لإنجليزي والعكس.
+
+### 2. الخطوط (Fonts)
+في ملف الـ SCSS، خليه يستخدم خطوط زي **"Tajawal"** أو **"Cairo"** من Google Fonts للعربي، و **"Roboto"** للإنجليزي. ده بيفرق جداً في شكل التطبيق الاحترافي ("رصين وجاد" زي ما طلبت).
+
+### 3. خرائط RTL
+خد بالك إن أزرار التحكم في الخريطة (الزووم وغيره) ممكن مكانها يبوظ في الـ RTL. اطلب منه يتأكد إن الـ CSS بتاع الخريطة **معزول (Isolated)** أو مظبوط عليه `dir="ltr"` لو الخريطة نفسها إنجليزي، أو متظبطة صح للعربي.
+
+---
+
+## المراحل والأولويات
+
+### المرحلة 1: البنية التحتية
 - [ ] إعداد مشروع Angular 18+ بوضع Standalone
 - [ ] إعداد مشروع FastAPI مع هيكل DDD
 - [ ] تكوين PostgreSQL + PostGIS
 - [ ] إعداد نظام المصادقة JWT
 
-#### المرحلة 2: الميزات الأساسية (Core Features)
+### المرحلة 2: الميزات الأساسية
 - [ ] نظام تسجيل الدخول عبر QR
 - [ ] محرك التمويل (Finance Engine)
 - [ ] خدمة الموقع الجغرافي (GeoService)
 - [ ] نظام إدارة المستخدمين (VIP/Standard)
 
-#### المرحلة 3: واجهة المستخدم (UI/UX)
+### المرحلة 3: واجهة المستخدم
 - [ ] تنفيذ نظام RTL الكامل
 - [ ] مبدل اللغة (Language Switcher)
 - [ ] لوحة القيادة (Dashboard)
 - [ ] مكون التتبع مع الخريطة
 
-#### المرحلة 4: التحسينات والاختبارات
-- [ ] اختبارات الوحدة (Unit Tests)
-- [ ] اختبارات التكامل (Integration Tests)
+### المرحلة 4: التحسينات
+- [ ] اختبارات الوحدة والتكامل
 - [ ] اختبارات RTL/LTR
 - [ ] تحسين الأداء
-
----
-
-### ملاحظات إضافية
-
-#### الهوية البصرية (Visual Identity)
-- التطبيق يجب أن يكون "رصين وجاد"
-- استخدام ألوان احترافية
-- تجربة مستخدم سلسة وبسيطة
-
-#### الأمان (Security)
-- التحقق من صحة جميع المدخلات
-- حماية ضد OWASP Top 10
-- تشفير البيانات الحساسة
-
-#### الأداء (Performance)
-- استخدام Lazy Loading للمكونات
-- تحسين استعلامات قاعدة البيانات
-- التخزين المؤقت (Caching) حيثما أمكن
-
----
-
-### المراجع والموارد
-
-#### للواجهة الأمامية
-- [Angular 18 Documentation](https://angular.dev)
-- [Angular Material RTL Guide](https://material.angular.io/guide/typography)
-- [Transloco Documentation](https://ngneat.github.io/transloco/)
-
-#### للواجهة الخلفية
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [SQLAlchemy Async](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)
-- [PostGIS Documentation](https://postgis.net/documentation/)
-
----
-
-### الخلاصة
-
-هذا المشروع يمثل **"وثيقة معمارية" (Architectural Blueprint)** متكاملة تجمع:
-
-1. **المتانة:** FastAPI + Async + PostGIS
-2. **الحداثة:** Angular 18 + Signals + Standalone
-3. **الواقعية:** قواعد VIP والاستثناءات
-4. **الهوية:** نظام عربي أولاً (Arabic-First)
-
-**الإضافة الأهم:** النظام **"عربي أولاً"** وليس مجرد ترجمة، مما يتطلب بناءً صحيحاً من "الدقيقة صفر" لتجنب كابوس التحويل لاحقاً.
